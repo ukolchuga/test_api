@@ -4,7 +4,9 @@ import random
 from datetime import date
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
+from matplotlib import pyplot as plt
 from sybilion import Client
+from datetime import datetime
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -96,6 +98,88 @@ def run_sybilion_forecast(timeseries_data: dict, metadata: dict, horizon: int = 
     return results
 
 
+def plot_sybilion_forecast(history_data: dict, forecast_json: dict):
+    """
+    Plots the historical data and the forecast with quantile bands.
+    """
+    # 1. Sort and parse history
+    sorted_history = sorted(history_data.items())
+    hist_dates = [datetime.strptime(date, "%Y-%m-%d") for date, _ in sorted_history]
+    hist_values = [val for _, val in sorted_history]
+
+    # 2. Parse the forecast
+    # If you pass the dictionary received from the API, check the keys:
+    forecast_series = forecast_json.get("2026-05-01")  # Check if it's a direct date key
+    if not forecast_series:
+        # If the full JSON response was passed, go deeper:
+        forecast_series = forecast_json.get("data", {}).get("forecast_series", forecast_json)
+
+    sorted_forecast = sorted(forecast_series.items())
+
+    fcst_dates = []
+    fcst_values = []
+    lower_band_80 = []  # 10th percentile
+    upper_band_80 = []  # 90th percentile
+    lower_band_50 = []  # 25th percentile
+    upper_band_50 = []  # 75th percentile
+
+    for date_str, metrics in sorted_forecast:
+        fcst_dates.append(datetime.strptime(date_str, "%Y-%m-%d"))
+        fcst_values.append(metrics["forecast"])
+
+        quantiles = metrics.get("quantile_forecast", {})
+
+        # Collect interval boundaries
+        lower_band_80.append(quantiles.get("0.10", metrics["forecast"]))
+        upper_band_80.append(quantiles.get("0.90", metrics["forecast"]))
+
+        lower_band_50.append(quantiles.get("0.25", metrics["forecast"]))
+        upper_band_50.append(quantiles.get("0.75", metrics["forecast"]))
+
+    # 3. "Stitch" history and forecast so there is no gap on the chart
+    if hist_dates and fcst_dates:
+        last_hist_date = hist_dates[-1]
+        last_hist_val = hist_values[-1]
+
+        fcst_dates.insert(0, last_hist_date)
+        fcst_values.insert(0, last_hist_val)
+        lower_band_80.insert(0, last_hist_val)
+        upper_band_80.insert(0, last_hist_val)
+        lower_band_50.insert(0, last_hist_val)
+        upper_band_50.insert(0, last_hist_val)
+
+    # 4. Plotting
+    plt.figure(figsize=(14, 7))
+
+    # Plot history (take the last 20 points for context)
+    plt.plot(hist_dates[-20:], hist_values[-20:], label="History (last 20 months)", color="black", linewidth=2)
+
+    # Plot the point forecast
+    plt.plot(fcst_dates, fcst_values, label="Point Forecast", color="blue", linestyle="--", linewidth=2, marker='o')
+
+    # Shade the 50% confidence interval (darker)
+    plt.fill_between(
+        fcst_dates, lower_band_50, upper_band_50,
+        color="blue", alpha=0.3, label="50% Confidence Interval (Q0.25 - Q0.75)"
+    )
+
+    # Shade the 80% confidence interval (lighter)
+    plt.fill_between(
+        fcst_dates, lower_band_80, upper_band_80,
+        color="blue", alpha=0.1, label="80% Confidence Interval (Q0.10 - Q0.90)"
+    )
+
+    # Formatting the chart
+    plt.title("Sybilion Forecast (Synthetic Data)", fontsize=16, fontweight="bold")
+    plt.xlabel("Date", fontsize=12)
+    plt.ylabel("Sensor Value", fontsize=12)
+    plt.grid(True, linestyle=":", alpha=0.7)
+    plt.legend(loc="upper left")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    plt.show()
+
 # --- Test Execution ---
 if __name__ == "__main__":
     print("Generating random test data (base value + trend + heavy noise)...")
@@ -134,3 +218,5 @@ if __name__ == "__main__":
         print("\n=== Forecast Result ===")
         forecast_series = final_data["forecast.json"]["data"]["forecast_series"]
         print(json.dumps(forecast_series, indent=2))
+
+    plot_sybilion_forecast(random_ts, final_data["forecast.json"])
