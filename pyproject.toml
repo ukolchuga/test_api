@@ -1,0 +1,14 @@
+[project]
+name = "test-api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10.9",
+    "pandas>=3.0.3",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+    "sybilion>=0.1.4",
+    "yfinance>=1.4.1",
+]
