@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GridPilot | Active Global Resilience Agent</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    
+    <!-- Dependencies -->
+    <script src="//unpkg.com/three"></script>
+    <script src="//unpkg.com/globe.gl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg-deep: #010204;
+            --panel-bg: rgba(6, 10, 15, 0.98);
+            --accent-primary: #00f2ff;
+            --accent-secondary: #7000ff;
+            --text-main: #f1f5f9;
+            --text-dim: #64748b;
+            --border-glow: rgba(0, 242, 255, 0.2);
+            --danger: #ff3333;
+            --success: #00ff88;
+            --warning: #ffaa00;
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background-color: var(--bg-deep);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #globe-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; pointer-events: auto; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        .gridpilot-shell {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+            padding: 15px; box-sizing: border-box;
+            display: grid;
+            grid-template-columns: 380px 1fr 380px;
+            grid-template-rows: 50px 1fr 240px;
+            gap: 12px;
+        }
+
+        .panel {
+            pointer-events: auto;
+            background: var(--panel-bg);
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(25px);
+            padding: 12px;
+            border-radius: 2px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.9);
+        }
+
+        .top-bar { grid-column: 1 / span 3; display: flex; justify-content: space-between; align-items: center; }
+        .logo-group h1 { margin: 0; font-size: 1rem; letter-spacing: 2px; color: var(--accent-primary); text-transform: uppercase; }
+        
+        #recalc-indicator { font-size: 0.65rem; color: var(--accent-primary); opacity: 0; transition: opacity 0.2s; }
+        #recalc-indicator.active { opacity: 1; }
+
+        .engine-status { display: flex; gap: 20px; font-size: 0.65rem; color: var(--text-dim); }
+        .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 5px; }
+
+        .strategy-sidebar { grid-row: 2; display: flex; flex-direction: column; gap: 12px; }
+        .section-header { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent-primary); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; }
+
+        .priority-slider { margin-bottom: 10px; }
+        .slider-head { display: flex; justify-content: space-between; font-size: 0.65rem; margin-bottom: 4px; }
+        
+        input[type=range] { -webkit-appearance: none; width: 100%; height: 2px; background: rgba(255,255,255,0.1); outline: none; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: var(--accent-primary); cursor: pointer; border-radius: 50%; box-shadow: 0 0 10px var(--accent-primary); }
+
+        .shock-btn {
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+            color: var(--text-dim); padding: 8px; font-size: 0.6rem; text-align: left;
+            cursor: pointer; margin-bottom: 5px; width: 100%; text-transform: uppercase;
+            transition: all 0.2s;
+        }
+        .shock-btn:hover { border-color: var(--accent-primary); color: white; background: rgba(0, 242, 255, 0.05); }
+        .shock-btn.active { background: rgba(255, 51, 51, 0.2); border-color: var(--danger); color: white; font-weight: bold; }
+
+        .reasoning-sidebar { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 12px; }
+        .logic-card { background: rgba(255,255,255,0.02); padding: 8px; font-size: 0.6rem; line-height: 1.3; border-left: 2px solid var(--accent-secondary); margin-bottom: 8px; animation: slideIn 0.3s ease-out; }
+
+        @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+        .allocation-container { overflow-x: auto; width: 100%; }
+        .allocation-table { width: 100%; font-size: 0.55rem; border-collapse: collapse; min-width: 600px; }
+        .allocation-table th { text-align: left; color: var(--text-dim); padding: 4px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .allocation-table td { padding: 4px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        .val-highlight { color: var(--accent-primary); font-weight: bold; }
+
+        .hud-bottom { grid-column: 1 / span 3; grid-row: 3; display: grid; grid-template-columns: 2fr 0.8fr 1fr; gap: 12px; }
+
+        #node-modal {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 350px; background: var(--panel-bg); border: 1px solid var(--accent-primary);
+            z-index: 100; padding: 15px; display: none; box-shadow: 0 0 50px rgba(0, 242, 255, 0.15);
+        }
+        .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.65rem; }
+        .btn-close { background: none; border: 1px solid var(--accent-primary); color: var(--accent-primary); padding: 6px; cursor: pointer; margin-top: 15px; width: 100%; font-size: 0.65rem; }
+
+        .scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(rgba(0,0,0,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.01), rgba(0,255,0,0.01), rgba(0,0,255,0.01)); background-size: 100% 4px, 4px 100%; pointer-events: none; z-index: 20; }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div id="globe-container"></div>
+
+    <div id="node-modal" class="panel">
+        <h2 id="modal-title" class="mono" style="margin:0 0 10px 0; font-size: 0.9rem; color: var(--accent-primary);">NODE_LOG</h2>
+        <div class="modal-grid">
+            <div class="modal-item"><span>CAPACITY</span><br><span id="m-cap">--</span></div>
+            <div class="modal-item"><span>CARBON</span><br><span id="m-carb">--</span></div>
+            <div class="modal-item"><span>SECURITY</span><br><span id="m-sec-rate">--</span></div>
+            <div class="modal-item"><span>VOLATILITY</span><br><span id="m-vol">--</span></div>
+            <div class="modal-item"><span>LOAD</span><br><span id="m-load-p">--</span></div>
+            <div class="modal-item"><span>BASE_COST</span><br><span id="m-cost">--</span></div>
+        </div>
+        <button class="btn-close mono" onclick="closeModal()">RESET CAMERA</button>
+    </div>
+
+    <div class="gridpilot-shell">
+        <header class="top-bar panel">
+            <div class="logo-group">
+                <h1>GridPilot v5.2 <span class="mono" style="font-size: 0.7rem; color: var(--text-dim);">// REAL-TIME_SOLVER</span></h1>
+            </div>
+            <div id="recalc-indicator" class="mono">RECALCULATING OPTIMUM...</div>
+            <div class="engine-status mono">
+                <div class="status-pill"><div class="dot"></div> AGENT: ACTIVE</div>
+                <div class="status-pill">REGIONS: 10</div>
+            </div>
+        </header>
+
+        <aside class="strategy-sidebar">
+            <div class="panel">
+                <div class="section-header">Priority Weights</div>
+                <div class="priority-slider">
+                    <div class="slider-head"><span>EXPECTED COST</span><span id="p-cost">25%</span></div>
+                    <input type="range" class="p-input" id="slide-cost" min="0" max="100" value="25">
+                </div>
+                <div class="priority-slider">
+                    <div class="slider-head"><span>CARBON BUDGET</span><span id="p-eco">30%</span></div>
+                    <input type="range" class="p-input" id="slide-eco" min="0" max="100" value="30">
+                </div>
+                <div class="priority-slider">
+                    <div class="slider-head"><span>TAIL RISK (CVaR)</span><span id="p-risk">25%</span></div>
+                    <input type="range" class="p-input" id="slide-risk" min="0" max="100" value="25">
+                </div>
+                <div class="priority-slider">
+                    <div class="slider-head"><span>UPTIME / SLA</span><span id="p-sec">20%</span></div>
+                    <input type="range" class="p-input" id="slide-sec" min="0" max="100" value="20">
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="section-header">Scenario Shocks</div>
+                <button class="shock-btn" data-type="heatwave">SPAIN HEATWAVE</button>
+                <button class="shock-btn" data-type="grid">GERMANY GRID STRESS</button>
+                <button class="shock-btn" data-type="carbon">GLOBAL CARBON SPIKE</button>
+                <button class="shock-btn" data-type="monsoon">INDIA MONSOON FLOOD</button>
+                <button class="shock-btn" data-type="political">BRAZIL GRID STABILITY</button>
+            </div>
+        </aside>
+
+        <aside class="reasoning-sidebar">
+            <div class="panel">
+                <div class="section-header">CVaR95 Distribution</div>
+                <div class="cvar-chart-container"><canvas id="cvarChart"></canvas></div>
+                <div style="font-size: 0.55rem; color: var(--text-dim); margin-top: 8px;" class="mono">
+                    CVaR95 TAIL EXPOSURE: <span id="cvar-value" style="color: var(--danger)">--</span>
+                </div>
+            </div>
+            <div class="panel" style="flex-grow: 1; overflow-y: auto;">
+                <div class="section-header">Decision Narrative</div>
+                <div id="logic-container"></div>
+            </div>
+        </aside>
+
+        <footer class="hud-bottom">
+            <div class="panel">
+                <div class="section-header">Workload Allocation Matrix (x[w, r])</div>
+                <div class="allocation-container">
+                    <table class="allocation-table mono">
+                        <thead id="alloc-head"></thead>
+                        <tbody id="allocation-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="section-header">Global Metrics</div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span class="mono" style="font-size: 0.6rem;">EXP. COST:</span>
+                    <span class="mono" id="m-cost-val" style="color: var(--accent-primary)">--</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span class="mono" style="font-size: 0.6rem;">CO2 IMPACT:</span>
+                    <span class="mono" id="m-eco-val" style="color: var(--success)">--</span>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="section-header">Solver Weights</div>
+                <div id="weight-tags" style="display: flex; gap: 5px; flex-wrap: wrap;">
+                    <!-- Recalculated live -->
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // --- REAL WORLD CONSTRAINTS (TIGHTER TO FORCE SPILLOVER) ---
+        const REGIONS = [
+            { id: 'FRA', name: "Frankfurt", lat: 50.11, lng: 8.68, carbon: 0.45, capacity: 40, security: 0.98, cost: 140 },
+            { id: 'MAD', name: "Madrid", lat: 40.41, lng: -3.70, carbon: 0.25, capacity: 35, security: 0.92, cost: 95 },
+            { id: 'HEL', name: "Helsinki", lat: 60.16, lng: 24.93, carbon: 0.05, capacity: 45, security: 0.99, cost: 70 },
+            { id: 'SIN', name: "Singapore", lat: 1.35, lng: 103.81, carbon: 0.42, capacity: 40, security: 0.96, cost: 115 },
+            { id: 'SAU', name: "Riyadh", lat: 24.71, lng: 46.67, carbon: 0.55, capacity: 45, security: 0.88, cost: 60 },
+            { id: 'IAD', name: "US-East", lat: 39.04, lng: -77.48, carbon: 0.48, capacity: 50, security: 0.97, cost: 105 },
+            { id: 'SAO', name: "São Paulo", lat: -23.55, lng: -46.63, carbon: 0.12, capacity: 30, security: 0.90, cost: 130 },
+            { id: 'BOM', name: "Mumbai", lat: 19.07, lng: 72.87, carbon: 0.65, capacity: 40, security: 0.85, cost: 55 },
+            { id: 'SYD', name: "Sydney", lat: -33.86, lng: 151.20, carbon: 0.35, capacity: 35, security: 0.95, cost: 160 },
+            { id: 'CPT', name: "Cape Town", lat: -33.92, lng: 18.42, carbon: 0.38, capacity: 30, security: 0.82, cost: 85 }
+        ];
+
+        // Total flexible demand (150 + 100 = 250) vs Total capacity (~400).
+        // Forces workloads to split across at least 6-7 regions.
+        const WORKLOADS = [
+            { id: 'inf_eu', name: "INF_EUROPE", demand: 30, lock: 'FRA' },
+            { id: 'inf_us', name: "INF_AMERICAS", demand: 35, lock: 'IAD' },
+            { id: 'inf_apac', name: "INF_APAC", demand: 25, lock: 'SIN' },
+            { id: 'batch', name: "BATCH_TRAIN", demand: 150, flex: true },
+            { id: 'eval', name: "EXP_EVAL", demand: 100, flex: true }
+        ];
+
+        let shocks = { heatwave: false, grid: false, carbon: false, monsoon: false, political: false };
+
+        // SOLVER ENGINE
+        function solve() {
+            // UI Visual feedback
+            const indicator = document.getElementById('recalc-indicator');
+            indicator.classList.add('active');
+            setTimeout(() => indicator.classList.remove('active'), 400);
+
+            const p = {
+                cost: parseFloat(document.getElementById('slide-cost').value) / 100,
+                eco: parseFloat(document.getElementById('slide-eco').value) / 100,
+                risk: parseFloat(document.getElementById('slide-risk').value) / 100,
+                sec: parseFloat(document.getElementById('slide-sec').value) / 100
+            };
+
+            // Recalculate regional metrics based on shocks
+            const forecast = REGIONS.map(r => {
+                let current_p = r.cost;
+                let current_vol = 15;
+                let current_cap = r.capacity;
+
+                if (shocks.grid && r.id === 'FRA') { current_p *= 2.5; current_vol = 50; current_cap = 10; }
+                if (shocks.heatwave && r.id === 'MAD') { current_p *= 2.0; current_vol = 70; }
+                if (shocks.monsoon && r.id === 'BOM') { current_p *= 1.8; current_vol = 60; current_cap = 5; }
+                if (shocks.political && r.id === 'SAO') { current_vol = 45; current_p *= 1.4; }
+                if (shocks.carbon) current_p += (r.carbon * 200);
+
+                // Normalization for Penalty Score
+                const n_cost = (current_p - 50) / 300;
+                const n_eco = r.carbon / 0.7;
+                const n_risk = current_vol / 70;
+                const n_sec = 1 - r.security;
+
+                const score = (p.cost * n_cost) + (p.eco * n_eco) + (p.risk * n_risk) + (p.sec * n_sec) + (Math.random() * 0.01); // Tie-breaker jitter
+                
+                return { ...r, current_p, current_vol, current_cap, score };
+            });
+
+            const results = {};
+            const remaining = {};
+            forecast.forEach(f => remaining[f.id] = f.current_cap);
+
+            // 1. Assign Fixed Inference
+            WORKLOADS.filter(w => w.lock).forEach(w => {
+                results[w.id] = {};
+                REGIONS.forEach(r => results[w.id][r.id] = 0);
+                results[w.id][w.lock] = 1;
+                remaining[w.lock] -= w.demand;
+            });
+
+            // 2. Greedy Optimization for Flexible Loads
+            const sorted = [...forecast].sort((a,b) => a.score - b.score);
+            WORKLOADS.filter(w => w.flex).forEach(w => {
+                results[w.id] = {};
+                REGIONS.forEach(r => results[w.id][r.id] = 0);
+                let left = w.demand;
+                sorted.forEach(f => {
+                    const take = Math.max(0, Math.min(left, remaining[f.id]));
+                    results[w.id][f.id] = take / w.demand;
+                    left -= take;
+                    remaining[f.id] -= take;
+                });
+            });
+
+            render(results, forecast, p);
+        }
+
+        function render(res, forecast, p) {
+            // 1. Matrix
+            const head = document.getElementById('alloc-head');
+            head.innerHTML = `<tr><th>WORKLOAD</th>${REGIONS.map(r => `<th>${r.id}</th>`).join('')}</tr>`;
+            const body = document.getElementById('allocation-body');
+            body.innerHTML = '';
+            WORKLOADS.forEach(w => {
+                const tr = document.createElement('tr');
+                let row = `<td>${w.name}</td>`;
+                REGIONS.forEach(r => {
+                    const val = Math.round(res[w.id][r.id] * 100);
+                    row += `<td class="${val > 0 ? 'val-highlight' : ''}">${val}%</td>`;
+                });
+                tr.innerHTML = row;
+                body.appendChild(tr);
+            });
+
+            // 2. Globe
+            const points = forecast.map(f => {
+                let load = 0;
+                WORKLOADS.forEach(w => load += (res[w.id][f.id] * w.demand));
+                const util = Math.max(0, load / f.capacity);
+                return {
+                    lat: f.lat, lng: f.lng, size: util * 5,
+                    color: util > 0.9 ? '#ff3333' : (util > 0.4 ? '#ffaa00' : '#00ff88'),
+                    label: `${f.name}: ${Math.round(util*100)}% LOAD`,
+                    raw: { ...f, currentLoad: load }
+                };
+            });
+            globe.pointsData(points).pointColor('color');
+
+            // 3. Global Stats
+            let tCost = 0; let tEco = 0;
+            WORKLOADS.forEach(w => {
+                REGIONS.forEach(r => {
+                    const share = res[w.id][r.id];
+                    if (share > 0) {
+                        tCost += (share * w.demand * forecast.find(f => f.id === r.id).current_p);
+                        tEco += (share * w.demand * r.carbon);
+                    }
+                });
+            });
+            document.getElementById('m-cost-val').innerText = `$${(tCost/1000).toFixed(2)}M`;
+            document.getElementById('m-eco-val').innerText = `${(tEco).toFixed(1)}k T`;
+            document.getElementById('cvar-value').innerText = `$${(tCost * 1.55 / 1000).toFixed(2)}M`;
+
+            // 4. Driver Logic
+            const log = document.getElementById('logic-container');
+            log.innerHTML = '';
+            const topRegion = [...forecast].sort((a,b) => a.score - b.score)[0];
+            addLog(log, `SOLVER: Optimized for ${topRegion.id}. Score: ${topRegion.score.toFixed(2)}`);
+            if (shocks.grid) addLog(log, "URGENT: Germany Grid Stress. Throttling FRA capacity to 10MW.");
+            if (shocks.monsoon) addLog(log, "URGENT: Mumbai Monsoon Flood. BOM capacity dropped to 5MW.");
+            if (p.eco > 0.6) addLog(log, "STRATEGY: Aggressive Carbon Budget enforcement active.");
+        }
+
+        // --- UI PLUMBING ---
+        const globe = Globe()(document.getElementById('globe-container'))
+            .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+            .pointAltitude(0.04).pointRadius(2.0).pointsTransitionDuration(500)
+            .onPointClick(p => {
+                globe.controls().autoRotate = false;
+                globe.pointOfView({ lat: p.lat, lng: p.lng, altitude: 0.6 }, 1000);
+                showModal(p.raw);
+            });
+
+        function showModal(d) {
+            const m = document.getElementById('node-modal');
+            document.getElementById('modal-title').innerText = `${d.id}_TELEMETRY`;
+            document.getElementById('m-cap').innerText = `${d.current_cap} MW`;
+            document.getElementById('m-carb').innerText = `${d.carbon} kg/MWh`;
+            document.getElementById('m-sec-rate').innerText = `${Math.round(d.security*100)}%`;
+            document.getElementById('m-vol').innerText = d.current_vol > 30 ? 'CRITICAL' : 'STABLE';
+            document.getElementById('m-load-p').innerText = `${Math.round((d.currentLoad/d.capacity)*100)}%`;
+            document.getElementById('m-cost').innerText = `$${d.current_p}/MWh`;
+            m.style.display = 'block';
+        }
+
+        function closeModal() { document.getElementById('node-modal').style.display = 'none'; globe.controls().autoRotate = true; globe.pointOfView({ altitude: 2.5 }, 1000); }
+        function addLog(c, t) { const d = document.createElement('div'); d.className = 'logic-card mono'; d.innerText = `> ${t}`; c.prepend(d); }
+
+        // WIRE LISTENERS CORRECTLY
+        document.querySelectorAll('.p-input').forEach(input => {
+            input.addEventListener('input', (e) => {
+                document.getElementById('p-' + e.target.id.split('-')[1]).innerText = e.target.value + '%';
+                solve();
+            });
+        });
+
+        document.querySelectorAll('.shock-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const type = e.target.getAttribute('data-type');
+                shocks[type] = !shocks[type];
+                e.target.classList.toggle('active');
+                solve();
+            });
+        });
+
+        window.addEventListener('resize', () => { globe.width(window.innerWidth); globe.height(window.innerHeight); });
+        globe.controls().autoRotate = true;
+        
+        // Initial Run
+        new Chart(document.getElementById('cvarChart'), {
+            type: 'bar',
+            data: { labels: ['S1','S2','S3','S4','S5','Tail'], datasets: [{ data: [15,17,20,24,28,42], backgroundColor: (c) => c.index === 5 ? '#ff3333' : 'rgba(0, 242, 255, 0.3)' }] },
+            options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{display:false},x:{grid:{display:false},ticks:{color:'#64748b',font:{size:8}}}} }
+        });
+        solve();
+    </script>
+</body>
+</html>
