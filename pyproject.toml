@@ -5,14 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.136.3",
     "matplotlib>=3.10.9",
     "pandas>=3.0.3",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
-<<<<<<< HEAD
     "scipy>=1.17.1",
-=======
->>>>>>> 9137ae9fbb533204e87d00a455067af77f7ce7cd
     "sybilion>=0.1.4",
+    "uvicorn>=0.48.0",
     "yfinance>=1.4.1",
 ]

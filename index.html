@@ -245,12 +245,12 @@
         let shocks = { heatwave: false, grid: false, carbon: false, monsoon: false, political: false };
 
         // SOLVER ENGINE
-        function solve() {
+        async function solve() {
             // UI Visual feedback
             const indicator = document.getElementById('recalc-indicator');
+            indicator.innerText = 'CALCULATING OPTIMUM...';
             indicator.classList.add('active');
-            setTimeout(() => indicator.classList.remove('active'), 400);
-
+            
             const p = {
                 cost: parseFloat(document.getElementById('slide-cost').value) / 100,
                 eco: parseFloat(document.getElementById('slide-eco').value) / 100,
@@ -258,7 +258,36 @@
                 sec: parseFloat(document.getElementById('slide-sec').value) / 100
             };
 
-            // Recalculate regional metrics based on shocks
+            let backendData = null;
+            try {
+                // Call FastAPI backend
+                const response = await fetch('http://localhost:8000/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        weights: {
+                            cost: p.cost,
+                            eco: p.eco,
+                            sicherheit: p.sec // Map 'sec' slider to 'sicherheit' heuristic
+                        }
+                    })
+                });
+                
+                if (response.ok) {
+                    backendData = await response.json();
+                    console.log("Loaded live backend data:", backendData);
+                }
+            } catch (e) {
+                console.log("FastAPI connection failed. Falling back to static simulation.", e);
+            }
+
+            setTimeout(() => {
+                indicator.classList.remove('active');
+                indicator.innerText = 'OPTIMUM FOUND';
+                setTimeout(() => indicator.innerText = 'RECALCULATING OPTIMUM...', 1000);
+            }, 400);
+
+            // Recalculate regional metrics based on shocks (frontend simulation)
             const forecast = REGIONS.map(r => {
                 let current_p = r.cost;
                 let current_vol = 15;
@@ -270,42 +299,71 @@
                 if (shocks.political && r.id === 'SAO') { current_vol = 45; current_p *= 1.4; }
                 if (shocks.carbon) current_p += (r.carbon * 200);
 
-                // Normalization for Penalty Score
-                const n_cost = (current_p - 50) / 300;
-                const n_eco = r.carbon / 0.7;
-                const n_risk = current_vol / 70;
-                const n_sec = 1 - r.security;
-
-                const score = (p.cost * n_cost) + (p.eco * n_eco) + (p.risk * n_risk) + (p.sec * n_sec) + (Math.random() * 0.01); // Tie-breaker jitter
+                // Use backend score if available and no shocks are active
+                let score;
+                const noShocks = !Object.values(shocks).some(v => v);
+                if (backendData && backendData.scores && backendData.scores[r.name] && noShocks) {
+                    score = backendData.scores[r.name];
+                } else {
+                    // Normalization fallback for Penalty Score
+                    const n_cost = (current_p - 50) / 300;
+                    const n_eco = r.carbon / 0.7;
+                    const n_risk = current_vol / 70;
+                    const n_sec = 1 - r.security;
+                    score = (p.cost * n_cost) + (p.eco * n_eco) + (p.risk * n_risk) + (p.sec * n_sec) + (Math.random() * 0.01);
+                }
                 
                 return { ...r, current_p, current_vol, current_cap, score };
             });
 
             const results = {};
-            const remaining = {};
-            forecast.forEach(f => remaining[f.id] = f.current_cap);
-
-            // 1. Assign Fixed Inference
-            WORKLOADS.filter(w => w.lock).forEach(w => {
-                results[w.id] = {};
-                REGIONS.forEach(r => results[w.id][r.id] = 0);
-                results[w.id][w.lock] = 1;
-                remaining[w.lock] -= w.demand;
-            });
-
-            // 2. Greedy Optimization for Flexible Loads
-            const sorted = [...forecast].sort((a,b) => a.score - b.score);
-            WORKLOADS.filter(w => w.flex).forEach(w => {
-                results[w.id] = {};
-                REGIONS.forEach(r => results[w.id][r.id] = 0);
-                let left = w.demand;
-                sorted.forEach(f => {
-                    const take = Math.max(0, Math.min(left, remaining[f.id]));
-                    results[w.id][f.id] = take / w.demand;
-                    left -= take;
-                    remaining[f.id] -= take;
+            const noShocks = !Object.values(shocks).some(v => v);
+            
+            if (backendData && backendData.allocation && noShocks) {
+                const nameMap = { "inference_EU": "inf_eu", "inference_MENA": "inf_us", "batch_training": "batch" };
+                const regionMap = { "Frankfurt": "FRA", "Madrid": "MAD", "Helsinki": "HEL" };
+                
+                WORKLOADS.forEach(w => {
+                    results[w.id] = {};
+                    REGIONS.forEach(r => results[w.id][r.id] = 0);
                 });
-            });
+
+                for (let [bw, brs] of Object.entries(backendData.allocation)) {
+                    const fid = nameMap[bw];
+                    if (fid) {
+                        for (let [br, share] of Object.entries(brs)) {
+                            const rid = regionMap[br];
+                            if (rid) results[fid][rid] = share;
+                        }
+                    }
+                }
+            } else {
+                // Greedy Optimization fallback
+                const remaining = {};
+                forecast.forEach(f => remaining[f.id] = f.current_cap);
+
+                // 1. Assign Fixed Inference
+                WORKLOADS.filter(w => w.lock).forEach(w => {
+                    results[w.id] = {};
+                    REGIONS.forEach(r => results[w.id][r.id] = 0);
+                    results[w.id][w.lock] = 1;
+                    remaining[w.lock] -= w.demand;
+                });
+
+                // 2. Greedy Optimization for Flexible Loads
+                const sorted = [...forecast].sort((a,b) => a.score - b.score);
+                WORKLOADS.filter(w => w.flex).forEach(w => {
+                    results[w.id] = {};
+                    REGIONS.forEach(r => results[w.id][r.id] = 0);
+                    let left = w.demand;
+                    sorted.forEach(f => {
+                        const take = Math.max(0, Math.min(left, remaining[f.id]));
+                        results[w.id][f.id] = take / w.demand;
+                        left -= take;
+                        remaining[f.id] -= take;
+                    });
+                });
+            }
 
             render(results, forecast, p);
         }
@@ -395,7 +453,7 @@
         document.querySelectorAll('.p-input').forEach(input => {
             input.addEventListener('input', (e) => {
                 document.getElementById('p-' + e.target.id.split('-')[1]).innerText = e.target.value + '%';
-                solve();
+                debouncedSolve();
             });
         });
 
@@ -404,7 +462,7 @@
                 const type = e.target.getAttribute('data-type');
                 shocks[type] = !shocks[type];
                 e.target.classList.toggle('active');
-                solve();
+                debouncedSolve();
             });
         });
 
@@ -416,6 +474,12 @@
             type: 'bar',
             data: { labels: ['S1','S2','S3','S4','S5','Tail'], datasets: [{ data: [15,17,20,24,28,42], backgroundColor: (c) => c.index === 5 ? '#ff3333' : 'rgba(0, 242, 255, 0.3)' }] },
             options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{display:false},x:{grid:{display:false},ticks:{color:'#64748b',font:{size:8}}}} }
+        });
+        solve();
+    </script>
+</body>
+</html>
+ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{display:false},x:{grid:{display:false},ticks:{color:'#64748b',font:{size:8}}}} }
         });
         solve();
     </script>

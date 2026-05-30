@@ -1,4 +1,6 @@
 import numpy as np
+import json
+import os
 from scipy.optimize import linprog
 
 # Reference sets
@@ -11,101 +13,144 @@ D = {"inference_EU": 35.0, "inference_MENA": 20.0, "batch_training": 50.0}
 # Physical constraints: Maximum DC Capacity (Cap) in MW
 Cap = {"Frankfurt": 50.0, "Madrid": 40.0, "Helsinki": 40.0}
 
-# Complex penalty coefficients (Generated downstream from Sybilion forecasts)
-# Reflects an operational profile emphasizing Eco/Cost (Helsinki is cleanest/cheapest)
-scores = {"Frankfurt": 0.6, "Madrid": 0.3, "Helsinki": 0.2}
+def normalize(values):
+    """Min-Max normalization to [0, 1]."""
+    arr = np.array(values)
+    v_min, v_max = arr.min(), arr.max()
+    if v_max == v_min:
+        return np.zeros_like(arr)
+    return (arr - v_min) / (v_max - v_min)
 
-print("=== INPUT METRICS ===")
-print(f"Total User Demand:      {sum(D.values())} MW")
-print(f"Total Network Capacity: {sum(Cap.values())} MW\n")
+def get_forecast_values():
+    """
+    Attempts to load forecasted values from sybilion_forecast_results.json.
+    If missing, returns realistic synthetic median values.
+    """
+    results_path = "sybilion_forecast_results.json"
+    metrics = ["cost", "eco", "sicherheit"]
+    
+    forecasts = {m: {} for m in metrics}
+    
+    if os.path.exists(results_path):
+        with open(results_path, "r") as f:
+            data = json.load(f)
+            for r in regions:
+                for m in metrics:
+                    try:
+                        # Extract the first forecast point
+                        val = list(data[r][m]["forecast.json"]["data"]["forecast_series"].values())[0]["forecast"]
+                        forecasts[m][r] = val
+                    except:
+                        pass
 
-# Flattening the 9 decision variables into a 1D vector for the LP objective function 'c':
-# [x1_FRA, x1_MAD, x1_HEL,  x2_FRA, x2_MAD, x2_HEL,  x3_FRA, x3_MAD, x3_HEL]
-c = []
-for w in workloads:
-    for r in regions:
-        c.append(scores[r] * D[w])
-
-# EQUALITY CONSTRAINTS (A_eq, b_eq) -> Sum of shares for each workload must equal 1.0
-A_eq = []
-b_eq = []
-for i, w in enumerate(workloads):
-    row = np.zeros(9)
-    row[i * 3 : (i + 1) * 3] = 1.0
-    A_eq.append(row)
-    b_eq.append(1.0)
-
-# INEQUALITY CONSTRAINTS (A_ub, b_ub) -> Total consumed MW in region <= Cap_r
-A_ub = []
-b_ub = []
-for j, r in enumerate(regions):
-    row = np.zeros(9)
-    row[j] = D["inference_EU"]  # EU Inference share
-    row[3 + j] = D["inference_MENA"]  # MENA Inference share
-    row[6 + j] = D["batch_training"]  # Batch training share
-    A_ub.append(row)
-    b_ub.append(Cap[r])
-
-# Variable bounds and network Latency SLA filtering
-bounds = [
-    # inference_EU: Only Frankfurt allowed. Madrid and Helsinki are zeroed out by SLA.
-    (0.0, 1.0),
-    (0.0, 0.0),
-    (0.0, 0.0),
-    # inference_MENA: Only Madrid allowed. Frankfurt and Helsinki are zeroed out by SLA.
-    (0.0, 0.0),
-    (0.0, 1.0),
-    (0.0, 0.0),
-    # batch_training: Location-agnostic. Free to float across any region.
-    (0.0, 1.0),
-    (0.0, 1.0),
-    (0.0, 1.0),
-]
-
-# Run Linear Programming using the modern HiGHS solver backend
-res = linprog(
-    c, A_eq=A_eq, b_eq=b_eq, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs"
-)
-
-# Evaluate and print results
-if res.success:
-    print("=== OPTIMAL WORKLOAD ALLOCATION (LP RESULT) ===")
-    x = res.x
-    idx = 0
-    for w in workloads:
-        print(f"\nWorkload Class: {w} (Required: {D[w]} MW)")
+    # Fill missing with defaults if necessary
+    defaults = {
+        "cost": {"Frankfurt": 120, "Madrid": 90, "Helsinki": 65},
+        "eco": {"Frankfurt": 420, "Madrid": 250, "Helsinki": 60},
+        "sicherheit": {"Frankfurt": 0.85, "Madrid": 0.70, "Helsinki": 0.50}
+    }
+    
+    for m in metrics:
         for r in regions:
-            share = x[idx]
-            allocated_mw = share * D[w]
-            if allocated_mw > 0:
-                print(f" -> Region [{r}]: {share * 100:.1f}% ({allocated_mw:.1f} MW)")
-            idx += 1
+            if r not in forecasts[m]:
+                forecasts[m][r] = defaults[m][r]
+                
+    return forecasts
 
-    print("\n=== PHYSICAL INFRASTRUCTURE LOAD VERIFICATION ===")
-    fra_load = (
-        x[0] * D["inference_EU"]
-        + x[3] * D["inference_MENA"]
-        + x[6] * D["batch_training"]
-    )
-    mad_load = (
-        x[1] * D["inference_EU"]
-        + x[4] * D["inference_MENA"]
-        + x[7] * D["batch_training"]
-    )
-    hel_load = (
-        x[2] * D["inference_EU"]
-        + x[5] * D["inference_MENA"]
-        + x[8] * D["batch_training"]
-    )
+def run_optimization_with_weights(weights_dict: dict):
+    """
+    Runs LP optimization using custom priority weights.
+    weights_dict: {"cost": float, "eco": float, "sicherheit": float} (should sum to ~1.0)
+    """
+    forecasts = get_forecast_values()
+    
+    # Calculate Normalized Scores
+    # N_r_Metric = (M_r - min) / (max - min)
+    norm_data = {}
+    for m in ["cost", "eco", "sicherheit"]:
+        vals = [forecasts[m][r] for r in regions]
+        n_vals = normalize(vals)
+        norm_data[m] = dict(zip(regions, n_vals))
+    
+    # Final Penalty Score per region
+    scores = {}
+    w_cost = weights_dict.get("cost", 0.33)
+    w_eco = weights_dict.get("eco", 0.33)
+    w_sich = weights_dict.get("sicherheit", 0.34)
+    
+    for r in regions:
+        scores[r] = (w_cost * norm_data["cost"][r] + 
+                     w_eco * norm_data["eco"][r] + 
+                     w_sich * norm_data["sicherheit"][r])
+    
+    print(f"Priority Weights: Cost={w_cost}, Eco={w_eco}, Sicherheit={w_sich}")
+    print(f"Calculated Scores: {scores}")
 
-    print(
-        f"Frankfurt: Utilized {fra_load:.1f} MW out of {Cap['Frankfurt']} MW Max Limit"
-    )
-    print(f"Madrid:    Utilized {mad_load:.1f} MW out of {Cap['Madrid']} MW Max Limit")
-    print(
-        f"Helsinki:  Utilized {hel_load:.1f} MW out of {Cap['Helsinki']} MW Max Limit"
-    )
-else:
-    print(
-        "Optimization Error: Solver failed to find a valid allocation. Verify bounds and capacities!"
-    )
+    # LP Setup
+    # Decision variables: x[w, r] -> 9 variables
+    c = []
+    for w in workloads:
+        for r in regions:
+            c.append(scores[r] * D[w])
+
+    # Constraints
+    A_eq, b_eq = [], []
+    for i, w in enumerate(workloads):
+        row = np.zeros(9)
+        row[i * 3 : (i + 1) * 3] = 1.0
+        A_eq.append(row)
+        b_eq.append(1.0)
+
+    A_ub, b_ub = [], []
+    for j, r in enumerate(regions):
+        row = np.zeros(9)
+        row[j] = D["inference_EU"]
+        row[3 + j] = D["inference_MENA"]
+        row[6 + j] = D["batch_training"]
+        A_ub.append(row)
+        b_ub.append(Cap[r])
+
+    # Bounds & Latency Blocks (SLA)
+    # Frankfurt block: MAD/HEL for EU
+    # Madrid block: FRA/HEL for MENA
+    bounds = [
+        (0.0, 1.0), (0.0, 0.0), (0.0, 0.0), # inference_EU -> FRA only
+        (0.0, 0.0), (0.0, 1.0), (0.0, 0.0), # inference_MENA -> MAD only
+        (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), # batch_training -> ANY
+    ]
+
+    res = linprog(c, A_eq=A_eq, b_eq=b_eq, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs")
+
+    if res.success:
+        allocation = {}
+        x = res.x
+        idx = 0
+        for w in workloads:
+            allocation[w] = {}
+            for r in regions:
+                allocation[w][r] = float(x[idx])
+                idx += 1
+        
+        output = {
+            "allocation": allocation,
+            "scores": scores,
+            "forecasts": forecasts,
+            "weights": weights_dict,
+            "status": "Optimal"
+        }
+        
+        # Save for persistence if needed
+        with open("ui_data.json", "w") as f:
+            json.dump(output, f, indent=4)
+            
+        return output
+    else:
+        return {"status": "Failed", "error": "Solver could not find a solution"}
+
+def run_optimization():
+    # Backward compatibility
+    return run_optimization_with_weights({"cost": 0.4, "eco": 0.3, "sicherheit": 0.3})
+
+if __name__ == "__main__":
+    run_optimization()
+

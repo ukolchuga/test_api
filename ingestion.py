@@ -260,11 +260,12 @@ if __name__ == "__main__":
     print("\n--- Pipeline Complete ---")
     print(master_data.tail())
 
-    master_data["Frankfurt_Grid_Stress"] = (
-        (master_data["Gas_Price_EUR"] * WEIGHT_GAS)
-        + (master_data["Carbon_Price"] * WEIGHT_CARBON)
-        + (master_data["Frankfurt_CDD"] * WEIGHT_CDD)
-    )
+    for region in REGIONS:
+        master_data[f"{region}_Grid_Stress"] = (
+            (master_data["Gas_Price_EUR"] * WEIGHT_GAS)
+            + (master_data["Carbon_Price"] * WEIGHT_CARBON)
+            + (master_data[f"{region}_CDD"] * WEIGHT_CDD)
+        )
 
     csv_file = "gridpilot_historical_context.csv"
     master_data.to_csv(csv_file)

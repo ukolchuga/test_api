@@ -1,0 +1,47 @@
+{
+    "allocation": {
+        "inference_EU": {
+            "Frankfurt": 1.0,
+            "Madrid": 0.0,
+            "Helsinki": 0.0
+        },
+        "inference_MENA": {
+            "Frankfurt": -0.0,
+            "Madrid": 1.0,
+            "Helsinki": 0.0
+        },
+        "batch_training": {
+            "Frankfurt": 0.0,
+            "Madrid": 0.19999999999999996,
+            "Helsinki": 0.8
+        }
+    },
+    "scores": {
+        "Frankfurt": 0.75,
+        "Madrid": 0.38625541125541124,
+        "Helsinki": 0.0
+    },
+    "forecasts": {
+        "cost": {
+            "Frankfurt": 120,
+            "Madrid": 90,
+            "Helsinki": 65
+        },
+        "eco": {
+            "Frankfurt": 420,
+            "Madrid": 250,
+            "Helsinki": 60
+        },
+        "sicherheit": {
+            "Frankfurt": 0.85,
+            "Madrid": 0.7,
+            "Helsinki": 0.5
+        }
+    },
+    "weights": {
+        "cost": 0.25,
+        "eco": 0.3,
+        "sicherheit": 0.2
+    },
+    "status": "Optimal"
+}

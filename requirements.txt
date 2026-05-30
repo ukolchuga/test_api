@@ -4,3 +4,8 @@ yfinance
 python-dotenv
 matplotlib
 sybilion
+fastapi
+uvicorn
+scipy
+numpy
+pydantic
