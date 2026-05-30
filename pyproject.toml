@@ -9,7 +9,10 @@ dependencies = [
     "pandas>=3.0.3",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
+<<<<<<< HEAD
     "scipy>=1.17.1",
+=======
+>>>>>>> 9137ae9fbb533204e87d00a455067af77f7ce7cd
     "sybilion>=0.1.4",
     "yfinance>=1.4.1",
 ]

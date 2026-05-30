@@ -1053,6 +1053,7 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "scipy"
 version = "1.17.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1124,6 +1125,8 @@ wheels = [
 ]
 
 [[package]]
+=======
+>>>>>>> 9137ae9fbb533204e87d00a455067af77f7ce7cd
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1165,7 +1168,10 @@ dependencies = [
     { name = "pandas" },
     { name = "python-dotenv" },
     { name = "requests" },
+<<<<<<< HEAD
     { name = "scipy" },
+=======
+>>>>>>> 9137ae9fbb533204e87d00a455067af77f7ce7cd
     { name = "sybilion" },
     { name = "yfinance" },
 ]
@@ -1176,7 +1182,10 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "requests", specifier = ">=2.34.2" },
+<<<<<<< HEAD
     { name = "scipy", specifier = ">=1.17.1" },
+=======
+>>>>>>> 9137ae9fbb533204e87d00a455067af77f7ce7cd
     { name = "sybilion", specifier = ">=0.1.4" },
     { name = "yfinance", specifier = ">=1.4.1" },
 ]
