@@ -1,15 +1,21 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 import os
 import asyncio
-from typing import Dict
+from typing import Dict, List
 from main import GridPilotForecaster
 import math_model
+import database
 
 app = FastAPI()
 app.is_forecasting = False
+
+# Initialize DB on startup
+@app.on_event("startup")
+async def startup_event():
+    database.init_db()
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -22,9 +28,30 @@ app.add_middleware(
 class PredictRequest(BaseModel):
     weights: Dict[str, float]
 
+class NodeCreate(BaseModel):
+    id: str
+    name: str
+    lat: float
+    lng: float
+    carbon: float
+    capacity: float
+    security: float
+    cost: float
+
 @app.get("/")
 def read_root():
     return {"status": "GridPilot API Active", "is_forecasting": app.is_forecasting}
+
+@app.get("/nodes")
+def get_nodes():
+    return database.get_nodes()
+
+@app.post("/nodes")
+def create_node(node: NodeCreate):
+    success = database.add_node(node.dict())
+    if not success:
+        raise HTTPException(status_code=400, detail="Node ID already exists or invalid data")
+    return {"status": "Node added successfully"}
 
 def run_actual_forecasts():
     """Reads JSON files and sends to Sybilion."""
